@@ -1,0 +1,444 @@
+{
+  "name": "pm-api",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "pm-api",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "prepare",
+      "name": "Prepare",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        220,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst a = body.action;\nconst hasAudio = Object.keys($input.first().binary || {}).length > 0;\nconst databaseActions = {\n  confirm: ['confirm_draft', { p_shop: body.shop_id, p_date: body.date, p_draft: body.draft }],\n  profile_save: ['save_profile', { p_shop: body.shop_id, p_data: body.profile }],\n  update_txn: ['update_txn', { p_shop: body.shop_id, p_id: Number(body.id), p_amount: Number(body.amount) }],\n  delete_txn: ['delete_txn', { p_shop: body.shop_id, p_id: Number(body.id) }],\n  transactions: ['get_transactions', { p_shop: body.shop_id, p_from: body.from, p_to: body.to }],\n  home: ['get_home', { p_shop: body.shop_id, p_date: body.date }],\n  summary: ['get_summary', { p_shop: body.shop_id, p_date: body.date }],\n  history: ['get_history', { p_shop: body.shop_id, p_days: 7 }],\n  insights: ['get_insights', { p_shop: body.shop_id }],\n  ask: ['get_snapshot', { p_shop: body.shop_id }],\n  login: ['auth_login', { p_email: body.email, p_password: body.password }],\n  signup: ['auth_signup', { p_email: body.email, p_password: body.password, p_store: body.store_name, p_name: body.owner_name }],\n  reset_demo: ['reset_demo_newuser', {}],\n};\nlet out;\nif (a === 'transcribe') { if (!hasAudio) throw new Error('No audio received'); out = { next: 'voice' }; }\nelse if (a === 'log') out = { next: hasAudio ? 'voice' : 'ai' };\nelse if (a === 'correct') out = { next: 'ai' };\nelse if (databaseActions[a]) out = { next: 'database', fn: databaseActions[a][0], databaseBody: databaseActions[a][1] };\nelse throw new Error('Unknown action: ' + a);\nreturn [{ json: out, binary: $input.first().binary }];"
+      }
+    },
+    {
+      "id": "route",
+      "name": "Route",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        440,
+        300
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "voice",
+                    "leftValue": "={{ $json.next }}",
+                    "rightValue": "voice",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "voice"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "database",
+                    "leftValue": "={{ $json.next }}",
+                    "rightValue": "database",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "database"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "typeValidation": "loose"
+                },
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "id": "ai",
+                    "leftValue": "={{ $json.next }}",
+                    "rightValue": "ai",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "renameOutput": true,
+              "outputKey": "ai"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "groq-whisper",
+      "name": "Groq Whisper",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        100
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "audio"
+            },
+            {
+              "name": "model",
+              "value": "whisper-large-v3-turbo"
+            },
+            {
+              "name": "temperature",
+              "value": "0"
+            },
+            {
+              "name": "response_format",
+              "value": "verbose_json"
+            },
+            {
+              "name": "prompt",
+              "value": "किराना दुकान: आटा, दाल, चावल, तेल, उधार, बाकी, बिक्री, माल, खाता। kirana shop: atta, daal, chawal, udhaar, baaki, bikri, maal."
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "format-voice-transcript",
+      "name": "Format Voice Transcript",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        100
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst text = String($input.first().json.text || '').trim();\nif (body.action === 'transcribe') return [{ json: { ok: true, text, needsAi: false } }];\nreturn [{ json: { text, needsAi: true } }];"
+      }
+    },
+    {
+      "id": "supabase-database-call",
+      "name": "Supabase Database Call",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://jflybkfaeleehrhlnruz.supabase.co/rest/v1/rpc/{{ $json.fn }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.databaseBody) }}"
+      }
+    },
+    {
+      "id": "format-database-result",
+      "name": "Format Database Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst r = $input.first().json;\nlet out;\nswitch (body.action) {\n  case 'confirm': out = { ok: true, saved: r.saved, summary: r.summary, alerts: r.alerts || [] }; break;\n  case 'summary': out = { ok: true, summary: r }; break;\n  case 'ask': out = { ok: true, needsAi: true, snapshot: r }; break;\n  default: out = { ok: true, ...r };\n}\nreturn [{ json: out }];"
+      }
+    },
+    {
+      "id": "needs-ai-",
+      "name": "Needs AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        300
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "typeValidation": "loose"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "n",
+              "leftValue": "={{ $json.needsAi === true ? \"yes\" : \"no\" }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "prepare-ai-request",
+      "name": "Prepare AI Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst input = $input.first().json;\nlet system, user, extra = {}, cfg = { temperature: 0, responseMimeType: 'application/json' };\nif (body.action === 'log') {\n  const transcript = String(input.text ?? body.text ?? '').trim();\n  if (!transcript) throw new Error('No audio or text received');\n  system = \"You turn a kirana shopkeeper's spoken or typed note into JSON. The input may be Hindi (Devanagari), English, or Hinglish (Hindi in Roman letters), and speech-to-text often makes spelling mistakes. Numerals may be spoken: pachaas=50, sau=100, hazaar=1000, dedh=1.5, dhai=2.5, 'k'=thousand. Output ONLY JSON. Do not guess: if an amount, quantity or name is unclear, add it to \\\"uncertain\\\" and use null.\\n\\nAPP LANGUAGE: the message ends with \\\"(App language: en|hi|hinglish)\\\". Write every customer name, supplier, item and note in that style: en = English (names in Roman letters like \\\"Akhil\\\"; items as English words like \\\"oil\\\", \\\"rice\\\", \\\"flour\\\"; keep \\\"atta\\\", \\\"daal\\\", \\\"ghee\\\" as is); hinglish = Roman-letter Hinglish (\\\"tel\\\", \\\"chawal\\\"); hi = Devanagari Hindi (\\\"अखिल\\\", \\\"तेल\\\"). Also return \\\"translation\\\": the whole input as one short natural sentence in the app language (en = English, hi = Devanagari Hindi, hinglish = Roman Hinglish). Keep numbers as digits.\\n\\nCREDIT CUES (udhaar): udhaar, udhar, udhari, udaar, udaari, uddhar, उधार, उधारी, उदार, उदारी, उधर, loan, credit, baaki, baki, बाकी, khata, खाता, खाते में, \\\"pay later\\\", \\\"baad mein dega\\\", बाद में देगा, \\\"will pay next week\\\". Speech-to-text often writes उधार as उदार or उदारी (उदार normally means generous, but next to an amount, an item or \\\"में/पर/par/mein\\\" it means credit).\\n\\nWHO DID WHAT (Hindi/Hinglish grammar): \\\"X ne ... liya\\\" = X took/bought (the shop SOLD to X). \\\"X ko ... becha/diya\\\" = the shop sold/gave to X. \\\"X ne ... diye / wapas kiye / chuka diye\\\" = X paid money back. \\\"maine X se ... liya\\\" = the shop bought from supplier X.\\n\\nSALES (\\\"sales\\\"): every sale has \\\"customer\\\" (the buyer's name if said, else null) and \\\"on_credit\\\" (boolean). A named buyer alone is NOT credit: \\\"sold atta for 1000 to Kaushik\\\" is a cash sale (customer \\\"Kaushik\\\", on_credit false). Set on_credit true ONLY when a credit cue is said about that sale. A credit sale is still a sale: put it in sales and never also in udhaar_given. If on_credit is true and no buyer name is said, set customer null and add to uncertain with the reason \\\"customer name missing\\\".\\nUDHAAR LEDGER: udhaar_given is ONLY for cash lent, or a plain \\\"X ka N udhaar\\\" / \\\"X ne N udhaar liya\\\" with NO goods or item mentioned (assumed already inside the day's sales). If an item or goods are mentioned together with a credit cue, it is a credit sale, not udhaar_given. udhaar_received = a customer paid back money they owed.\\nPURCHASES: \\\"maal liya / kharida / bought\\\" are purchases from a supplier. Buying stock on credit from a supplier is still a purchase, never a sale or udhaar_given. Expense category is one of electricity|rent|salary|transport|other.\\n\\nJSON shape: {\\\"language_detected\\\":\\\"hindi|english|hinglish\\\",\\\"translation\\\":string,\\\"sales\\\":[{\\\"amount_inr\\\":number,\\\"note\\\":string,\\\"customer\\\":string|null,\\\"on_credit\\\":boolean}],\\\"purchases\\\":[{\\\"item\\\":string,\\\"qty\\\":number|null,\\\"unit\\\":string,\\\"total_inr\\\":number|null,\\\"supplier\\\":string|null}],\\\"expenses\\\":[{\\\"category\\\":string,\\\"amount_inr\\\":number,\\\"note\\\":string}],\\\"udhaar_given\\\":[{\\\"customer\\\":string,\\\"amount_inr\\\":number}],\\\"udhaar_received\\\":[{\\\"customer\\\":string,\\\"amount_inr\\\":number}],\\\"uncertain\\\":[{\\\"field\\\":\\\"e.g. purchases[0].qty\\\",\\\"reason\\\":string}],\\\"confidence\\\":number 0-1}\\n\\nInput: \\\"अखिल ने तेल लिया 500 का उदार में. (App language: en)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hindi\\\",\\\"translation\\\":\\\"Akhil took oil worth 500 on credit.\\\",\\\"sales\\\":[{\\\"amount_inr\\\":500,\\\"note\\\":\\\"oil\\\",\\\"customer\\\":\\\"Akhil\\\",\\\"on_credit\\\":true}],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.95}\\nInput: \\\"अखिल ने तेल लिया 500 का उदार में. (App language: hi)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hindi\\\",\\\"translation\\\":\\\"अखिल ने 500 का तेल उधार में लिया।\\\",\\\"sales\\\":[{\\\"amount_inr\\\":500,\\\"note\\\":\\\"तेल\\\",\\\"customer\\\":\\\"अखिल\\\",\\\"on_credit\\\":true}],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.95}\\nInput: \\\"Ramesh ko 500 ka tel udhaar pe becha (App language: hinglish)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hinglish\\\",\\\"translation\\\":\\\"Ramesh ko 500 ka tel udhaar pe becha.\\\",\\\"sales\\\":[{\\\"amount_inr\\\":500,\\\"note\\\":\\\"tel\\\",\\\"customer\\\":\\\"Ramesh\\\",\\\"on_credit\\\":true}],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.95}\\nInput: \\\"I sold atta for 1000 rupees to Kaushik (App language: en)\\\"\\nOutput: {\\\"language_detected\\\":\\\"english\\\",\\\"translation\\\":\\\"I sold atta for 1000 rupees to Kaushik.\\\",\\\"sales\\\":[{\\\"amount_inr\\\":1000,\\\"note\\\":\\\"atta\\\",\\\"customer\\\":\\\"Kaushik\\\",\\\"on_credit\\\":false}],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.95}\\nInput: \\\"sold 800 rupees of rice on credit (App language: en)\\\"\\nOutput: {\\\"language_detected\\\":\\\"english\\\",\\\"translation\\\":\\\"Sold 800 rupees of rice on credit.\\\",\\\"sales\\\":[{\\\"amount_inr\\\":800,\\\"note\\\":\\\"rice\\\",\\\"customer\\\":null,\\\"on_credit\\\":true}],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[{\\\"field\\\":\\\"sales[0].customer\\\",\\\"reason\\\":\\\"customer name missing\\\"}],\\\"confidence\\\":0.8}\\nInput: \\\"रमेश का 300 उधार (App language: en)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hindi\\\",\\\"translation\\\":\\\"Ramesh's 300 udhaar.\\\",\\\"sales\\\":[],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[{\\\"customer\\\":\\\"Ramesh\\\",\\\"amount_inr\\\":300}],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.9}\\nInput: \\\"सुरेश ने 200 वापस दिए (App language: hi)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hindi\\\",\\\"translation\\\":\\\"सुरेश ने 200 रुपये वापस दिए।\\\",\\\"sales\\\":[],\\\"purchases\\\":[],\\\"expenses\\\":[],\\\"udhaar_given\\\":[],\\\"udhaar_received\\\":[{\\\"customer\\\":\\\"सुरेश\\\",\\\"amount_inr\\\":200}],\\\"uncertain\\\":[],\\\"confidence\\\":0.9}\\nInput: \\\"Aaj 8000 ki bikri, Sharma distributor se 50 kilo atta 2000 ka liya, bijli ka 300, Ramesh ka 300 udhaar (App language: hinglish)\\\"\\nOutput: {\\\"language_detected\\\":\\\"hinglish\\\",\\\"translation\\\":\\\"Aaj 8000 ki bikri, Sharma Distributor se 50 kilo atta 2000 ka liya, bijli ka 300, Ramesh ka 300 udhaar.\\\",\\\"sales\\\":[{\\\"amount_inr\\\":8000,\\\"note\\\":\\\"total day sales\\\",\\\"customer\\\":null,\\\"on_credit\\\":false}],\\\"purchases\\\":[{\\\"item\\\":\\\"atta\\\",\\\"qty\\\":50,\\\"unit\\\":\\\"kg\\\",\\\"total_inr\\\":2000,\\\"supplier\\\":\\\"Sharma Distributor\\\"}],\\\"expenses\\\":[{\\\"category\\\":\\\"electricity\\\",\\\"amount_inr\\\":300,\\\"note\\\":\\\"\\\"}],\\\"udhaar_given\\\":[{\\\"customer\\\":\\\"Ramesh\\\",\\\"amount_inr\\\":300}],\\\"udhaar_received\\\":[],\\\"uncertain\\\":[],\\\"confidence\\\":0.95}\"; user = transcript + ' (App language: ' + (body.lang || 'en') + ')'; extra = { transcript };\n} else if (body.action === 'correct') {\n  system = \"You fix a kirana shopkeeper's draft entry. You get the current draft JSON and a spoken/typed correction (Hindi, English or Hinglish, e.g. \\\"nahi, atta 2500 ka tha\\\"). Apply ONLY the correction, keep everything else unchanged, and return the full updated draft as JSON in exactly the same shape. Remove an \\\"uncertain\\\" entry once the correction resolves it. Write any new or changed name, item or note in the style given by \\\"(App language: en|hi|hinglish)\\\": en = English with Roman-letter names, hi = Devanagari Hindi, hinglish = Roman Hinglish. Keep \\\"translation\\\" and every other field as they are unless the correction changes them. Output ONLY JSON.\";\n  user = 'DRAFT:\\n' + JSON.stringify(body.draft) + '\\n\\nCORRECTION: ' + body.correction_text + ' (App language: ' + (body.lang || 'en') + ')';\n} else {\n  system = \"You are Profi AI, a friendly assistant for a small kirana shop owner. Answer ONLY from the JSON shop data provided. If the data does not contain the answer, say so briefly and suggest logging more entries. Never invent numbers. Use ₹. Keep it to 2-3 short, simple sentences. The message ends with \\\"(App language: en|hi|hinglish)\\\". Reply STRICTLY in that language: en = plain English only, no Hindi words; hi = Devanagari Hindi only, no English or Roman letters (write amounts as ₹ numbers); hinglish = natural Hindi-English mix in Roman letters. Item and customer names from the data may be kept as they are. Never mention or repeat the app-language note in your answer.\";\n  user = 'SHOP DATA:\\n' + JSON.stringify(input.snapshot) + '\\n\\nQUESTION: ' + body.question + (body.lang ? '\\n(App language: ' + body.lang + ')' : '');\n  cfg = { temperature: 0.2 };\n}\nreturn [{ json: { ...extra, gemini: { systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }], generationConfig: cfg } } }];"
+      }
+    },
+    {
+      "id": "gemini",
+      "name": "Gemini",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1560,
+        500
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gemini) }}"
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "finish",
+      "name": "Finish",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1780,
+        500
+      ],
+      "parameters": {
+        "jsCode": "const body = $('Webhook').first().json.body || {};\nconst ctx = $('Prepare AI Request').first().json;\nconst raw = ($input.first().json.candidates?.[0]?.content?.parts || []).map(p => p.text).join('');\nif (body.action === 'ask') return [{ json: { ok: true, answer_text: raw.replace(/\\s*\\(\\s*app language[^)]*\\)\\s*$/i, '').trim() } }];\nlet d; try { d = JSON.parse(raw); } catch (e) { throw new Error('AI returned invalid JSON'); }\nconst arr = x => Array.isArray(x) ? x : [];\nconst num = v => (typeof v === 'number' && isFinite(v) && v > 0) ? v : null;\nconst unitPrice = p => (num(p.qty) && num(p.total_inr)) ? Math.round(p.total_inr / p.qty * 100) / 100 : null;\nif (body.action === 'correct') {\n  arr(d.purchases).forEach(p => { p.unit_price_inr = unitPrice(p); });\n  d.date = body.draft.date; d.uncertain = arr(d.uncertain);\n  return [{ json: { ok: true, draft: d } }];\n}\nconst CREDIT_WORDS = /udhaar|udhar|udhari|udaar|udaari|uddhar|loan|credit|baaki|baki|khata|khate|on account|pay later|later|baad mein|baad me|next week|tomorrow|kal dega|kal dungi|dega|degi|due|pending|उधार|उधारी|उदार|उदारी|उधर|बाकी|खाता|खाते|लोन|बाद में|बाद मे|कल दे/i;\nconst unc = arr(d.uncertain);\nconst flag = (field, reason) => unc.push({ field, reason });\nconst draft = {\n  date: body.date, language_detected: d.language_detected || 'unknown', translation: typeof d.translation === 'string' ? d.translation.trim() : '',\n  sales: arr(d.sales).map((s, i) => { const a = num(s.amount_inr); if (a === null) flag('sales['+i+'].amount_inr', 'missing or invalid amount'); const name = (typeof s.customer === 'string' && s.customer.trim()) ? s.customer.trim() : null;\n    // Safeguard: a sale counts as credit only if the model says so AND the words actually spoken contain a credit cue.\n    const credit = s.on_credit === true && CREDIT_WORDS.test(ctx.transcript || '');\n    if (credit && !name) flag('sales['+i+'].customer', 'customer name missing');\n    return { amount_inr: a, note: s.note || '', customer: name, on_credit: credit }; }),\n  purchases: arr(d.purchases).map((p, i) => {\n    const qty = num(p.qty), total = num(p.total_inr);\n    if (qty === null) flag('purchases['+i+'].qty', 'quantity unclear');\n    if (total === null) flag('purchases['+i+'].total_inr', 'amount unclear');\n    return { item: p.item, qty, unit: p.unit || '', total_inr: total, unit_price_inr: unitPrice({ qty, total_inr: total }), supplier: p.supplier || null };\n  }),\n  expenses: arr(d.expenses).map((e, i) => { const a = num(e.amount_inr); if (a === null) flag('expenses['+i+'].amount_inr', 'invalid amount'); return { category: e.category || 'other', amount_inr: a, note: e.note || '' }; }),\n  udhaar_given: arr(d.udhaar_given).map((u, i) => { const a = num(u.amount_inr); if (a === null) flag('udhaar_given['+i+'].amount_inr', 'invalid amount'); return { customer: u.customer, amount_inr: a }; }),\n  udhaar_received: arr(d.udhaar_received).map((u, i) => { const a = num(u.amount_inr); if (a === null) flag('udhaar_received['+i+'].amount_inr', 'invalid amount'); return { customer: u.customer, amount_inr: a }; }),\n  uncertain: unc, confidence: typeof d.confidence === 'number' ? d.confidence : 0\n};\nreturn [{ json: { ok: true, transcript: ctx.transcript, draft } }];"
+      }
+    },
+    {
+      "id": "respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2000,
+        300
+      ],
+      "parameters": {
+        "respondWith": "firstIncomingItem",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare": {
+      "main": [
+        [
+          {
+            "node": "Route",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route": {
+      "main": [
+        [
+          {
+            "node": "Groq Whisper",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Supabase Database Call",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Groq Whisper": {
+      "main": [
+        [
+          {
+            "node": "Format Voice Transcript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Voice Transcript": {
+      "main": [
+        [
+          {
+            "node": "Needs AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supabase Database Call": {
+      "main": [
+        [
+          {
+            "node": "Format Database Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Database Result": {
+      "main": [
+        [
+          {
+            "node": "Needs AI?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs AI?": {
+      "main": [
+        [
+          {
+            "node": "Prepare AI Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare AI Request": {
+      "main": [
+        [
+          {
+            "node": "Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini": {
+      "main": [
+        [
+          {
+            "node": "Finish",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Finish": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

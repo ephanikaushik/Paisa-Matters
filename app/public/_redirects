@@ -1,0 +1,2 @@
+/api/*  https://ephanikaushik.app.n8n.cloud/webhook/:splat  200
+/*      /index.html                                          200
